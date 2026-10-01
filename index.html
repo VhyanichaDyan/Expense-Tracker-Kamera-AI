@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Expense Tracker - Dual Mode + Kamera + AI Detection</title>
+
+    <!-- ============================================================ -->
+    <!-- 1. KONFIGURASI FIREBASE (PALING ATAS)                        -->
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyBdw-h6g-afQkiP4nCEwF81raEwjEJCdbs",
+            authDomain: "expense-tracker-mahasisw-e2982.firebaseapp.com",
+            projectId: "expense-tracker-mahasisw-e2982",
+            storageBucket: "expense-tracker-mahasisw-e2982.firebasestorage.app",
+            messagingSenderId: "818988952701",
+            appId: "1:818988952701:web:14052cce6cf9e9cf501514"
+        };
+    </script>
+
+    <!-- Import TensorFlow.js dan COCO-SSD -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+
+        .status-section {
+            text-align: center;
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .status-section h2 {
+            color: #555;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .status-badge.online {
+            background: #d4edda;
+            color: #155724;
+            border: 2px solid #28a745;
+        }
+
+        .status-badge.demo {
+            background: #fff3cd;
+            color: #856404;
+            border: 2px solid #ffc107;
+        }
+
+        .mode-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .mode-card {
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid;
+        }
+
+        .mode-card.firebase { background: #e8f5e9; border-color: #4caf50; }
+        .mode-card.mock { background: #fff8e1; border-color: #ffc107; }
+
+        .mode-card h3 { margin-bottom: 8px; font-size: 15px; font-weight: 600; }
+        .mode-card.firebase h3 { color: #2e7d32; }
+        .mode-card.mock h3 { color: #f57f17; }
+        .mode-card p { font-size: 13px; color: #666; }
+
+        .button-group {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        button {
+            padding: 12px 24px;
+            margin: 5px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            border-radius: 6px;
+            transition: all 0.3s;
+        }
+
+        #btn-start { background: #4caf50; color: white; }
+        #btn-start:hover { background: #45a049; transform: translateY(-2px); }
+
+        #btn-stop { background: #f44336; color: white; }
+        #btn-stop:hover { background: #da190b; transform: translateY(-2px); }
+
+        #btn-ai { background: #2196f3; color: white; }
+        #btn-ai:hover { background: #1976d2; transform: translateY(-2px); }
+
+        #btn-ai.stop { background: #ff9800; }
+        #btn-ai.stop:hover { background: #f57c00; }
+
+        /* KAMERA LEBIH BESAR */
+        #camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 100%;
+            margin: 20px auto;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            aspect-ratio: 16/9;
+        }
+
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        #overlay-msg {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 5;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            width: 40px; height: 40px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Toast Notification */
+        #toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 999;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+
+        #toast.show { opacity: 1; }
+        #toast.success { background: #28a745; }
+        #toast.error { background: #dc3545; }
+
+        .detection-info {
+            text-align: center;
+            margin: 15px 0;
+            padding: 10px;
+            background: #e3f2fd;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #1565c0;
+            display: none;
+        }
+
+        /* Data List Section */
+        .data-section {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .data-section h2 {
+            color: #555;
+            margin-bottom: 15px;
+            font-size: 18px;
+            text-align: center;
+        }
+
+        #data-list {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            background: white;
+        }
+
+        .log-item {
+            padding: 12px 15px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border-left: 4px solid #2196f3;
+            border-radius: 4px;
+        }
+
+        .log-item .time {
+            font-weight: 600;
+            color: #1565c0;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+
+        .log-item .items {
+            color: #333;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .log-item .count {
+            color: #666;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+
+        .log-count {
+            text-align: center;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+            font-weight: 600;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #999;
+            padding: 30px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Expense Tracker - AI Detection</h1>
+
+        <!-- Status Database -->
+        <div class="status-section">
+            <h2>Status Database</h2>
+            <div id="db-status" class="status-badge">Memeriksa...</div>
+        </div>
+
+        <!-- Info Mode -->
+        <div class="mode-info">
+            <div class="mode-card firebase">
+                <h3> Firebase Mode</h3>
+                <p>Data tersimpan di cloud, bisa diakses dari perangkat lain.</p>
+            </div>
+            <div class="mode-card mock">
+                <h3> Mock Mode (LocalStorage)</h3>
+                <p>Data tersimpan di browser lokal. Cocok untuk testing.</p>
+            </div>
+        </div>
+
+        <!-- Info Deteksi -->
+        <div id="detection-info" class="detection-info">
+            Objek terdeteksi: <strong id="detected-count">0</strong> |
+            Model: <strong id="model-status">Belum dimuat</strong>
+        </div>
+
+        <!-- Tombol Kamera -->
+        <div class="button-group">
+            <button id="btn-start" onclick="startCamera()"> Start Camera</button>
+            <button id="btn-stop" onclick="stopCamera()" style="display: none;">️ Stop Camera</button>
+            <button id="btn-ai" onclick="toggleAI()" style="display: none;"> Start AI</button>
+        </div>
+
+        <!-- Container Kamera -->
+        <div id="camera-container" style="display: none;">
+            <video id="video" autoplay playsinline muted></video>
+            <canvas id="canvas"></canvas>
+            <div id="overlay-msg" style="display: none;">
+                <div class="spinner"></div>
+                <p id="overlay-text">Memulai Sistem...</p>
+            </div>
+        </div>
+
+        <!-- Data List Section -->
+        <div class="data-section">
+            <h2> Log Deteksi Real-time</h2>
+            <div id="data-list">
+                <div class="empty-state">Belum ada objek terdeteksi</div>
+            </div>
+            <div class="log-count" id="log-count">0 items</div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast"></div>
+
+
+    <!-- SCRIPT UTAMA                                                 -->
+    <script type="module">
+        // Import Firebase (v9 modular)
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { 
+            getFirestore, 
+            collection, 
+            addDoc, 
+            onSnapshot, 
+            query, 
+            orderBy, 
+            limit, 
+            serverTimestamp 
+        } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+        // ==================== DATABASE ====================
+        let db;
+        let isMockMode = true;
+        const dbStatusEl = document.getElementById('db-status');
+        let detectionsCollection = null; // Nama collection
+
+        if (firebaseConfig.apiKey && firebaseConfig.projectId) {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                isMockMode = false;
+                dbStatusEl.textContent = " FIREBASE ONLINE";
+                dbStatusEl.className = "status-badge online";
+                detectionsCollection = collection(db, 'detections');
+                console.log("✅ Firebase terhubung.");
+            } catch (e) {
+                console.error("❌ Firebase error:", e);
+            }
+        }
+
+        if (isMockMode) {
+            db = new MockFirestore();
+            dbStatusEl.textContent = " DEMO MODE";
+            dbStatusEl.className = "status-badge demo";
+            detectionsCollection = db.collection('detections');
+        }
+
+        class MockFirestore {
+            constructor() {
+                this.collections = {};
+            }
+            collection(name) {
+                if (!this.collections[name]) {
+                    this.collections[name] = new MockCollection(name);
+                }
+                return this.collections[name];
+            }
+        }
+
+        class MockCollection {
+            constructor(name) {
+                this.name = name;
+                this.data = JSON.parse(localStorage.getItem('mock_' + name)) || [];
+                this.listeners = [];
+            }
+            async add(payload) {
+                const doc = { 
+                    ...payload, 
+                    id: Date.now().toString(),
+                    timestamp: new Date().toISOString()
+                };
+                this.data.unshift(doc);
+                if (this.data.length > 50) this.data.pop();
+                localStorage.setItem('mock_' + this.name, JSON.stringify(this.data));
+                this.listeners.forEach(cb => cb(this.data));
+                return Promise.resolve();
+            }
+            onSnapshot(cb) {
+                this.listeners.push(cb);
+                cb(this.data);
+                return () => {};
+            }
+        }
+
+        // ==================== VARIABEL GLOBAL ====================
+        let model = null;
+        let isAIDetecting = false;
+        let isCameraOn = false;
+        let currentStream = null;
+        let animationId = null;
+
+        // Throttling variables
+        let lastSaveTime = 0;
+        const SAVE_THROTTLE_MS = 3000;
+
+        const TARGET_CLASSES = [
+            'mouse', 'keyboard', 'cell phone', 'book', 
+            'scissors', 'laptop', 'person'
+        ];
+
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // ==================== FUNGSI TOAST & OVERLAY ====================
+        function showToast(message, type = '') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'show ' + type;
+            setTimeout(() => { toast.className = ''; }, 3000);
+        }
+
+        function showOverlay(title, message) {
+            const overlay = document.getElementById('overlay-msg');
+            const text = document.getElementById('overlay-text');
+            overlay.style.display = 'flex';
+            text.innerHTML = `<strong>${title}</strong><br>${message}`;
+        }
+
+        function hideOverlay() {
+            document.getElementById('overlay-msg').style.display = 'none';
+        }
+
+        // ==================== 1. MEMUAT MODEL AI ====================
+        async function loadModel() {
+            showOverlay("Memuat Model AI (COCO-SSD)...", "Mengunduh bobot model ± 5MB. Mohon tunggu.");
+
+            try {
+                model = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+                hideOverlay();
+                showToast("Model AI siap digunakan!", "success");
+                console.log("Model berhasil dimuat:", model);
+                document.getElementById('model-status').textContent = "COCO-SSD (lite_mobilenet_v2)";
+            } catch (err) {
+                console.error("Gagal memuat model:", err);
+                showOverlay("Gagal Memuat Model AI", "Periksa koneksi internet Anda.");
+                showToast("Gagal memuat model AI", "error");
+            }
+        }
+
+        // ==================== 2. SAVE TO DATABASE (dengan Throttling) ====================
+        async function saveToDatabase(data) {
+            try {
+                const itemsString = data.map(d => 
+                    `${d.class} (${d.confidence}%)`
+                ).join(', ');
+
+                const payload = {
+                    items: itemsString,
+                    count: data.length,
+                    device_id: 'BROWSER-TEST',
+                    timestamp: isMockMode 
+                        ? new Date().toISOString() 
+                        : serverTimestamp()
+                };
+
+                await addDoc(detectionsCollection, payload);
+                showToast(`Tersimpan: ${data.length} objek`, "success");
+                console.log("Data tersimpan:", payload);
+            } catch (err) {
+                console.error("Gagal menyimpan ke database:", err);
+                showToast("Gagal menyimpan ke database", "error");
+            }
+        }
+
+        // ==================== 3. LISTEN TO DATABASE ====================
+        function listenToDatabase() {
+            if (isMockMode) {
+                // Mock mode
+                detectionsCollection.onSnapshot(data => {
+                    renderDataList(data);
+                });
+            } else {
+                // Firebase mode
+                const q = query(
+                    detectionsCollection, 
+                    orderBy("timestamp", "desc"), 
+                    limit(30)
+                );
+                onSnapshot(q, (snapshot) => {
+                    const data = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    renderDataList(data);
+                }, (err) => {
+                    console.error("Error listening to database:", err);
+                });
+            }
+        }
+
+        function renderDataList(data) {
+            const dataList = document.getElementById('data-list');
+            dataList.innerHTML = '';
+
+            if (!data || data.length === 0) {
+                dataList.innerHTML = '<div class="empty-state">Belum ada objek terdeteksi</div>';
+                document.getElementById('log-count').textContent = '0 items';
+                return;
+            }
+
+            data.forEach(item => {
+                let timeStr;
+                if (item.timestamp) {
+                    const date = isMockMode 
+                        ? new Date(item.timestamp) 
+                        : (item.timestamp.toDate ? item.timestamp.toDate() : new Date(item.timestamp));
+                    timeStr = date.toLocaleString('id-ID');
+                } else {
+                    timeStr = 'Baru saja';
+                }
+
+                const div = document.createElement('div');
+                div.className = 'log-item';
+                div.innerHTML = `
+                    <div class="time">🕐 ${timeStr}</div>
+                    <div class="items">${item.items}</div>
+                    <div class="count">📦 ${item.count} objek | Device: ${item.device_id || '-'}</div>
+                `;
+                dataList.appendChild(div);
+            });
+
+            document.getElementById('log-count').textContent = `${data.length} items`;
+        }
+
+        // ==================== 4. DETECTION LOOP (dengan Throttling) ====================
+        async function detectLoop() {
+            if (!isAIDetecting || !isCameraOn) return;
+
+            const predictions = await model.detect(video);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            let detectedTargets = [];
+
+            predictions.forEach(pred => {
+                const [x, y, w, h] = pred.bbox;
+                const isTarget = TARGET_CLASSES.includes(pred.class);
+                const confidence = pred.score;
+
+                ctx.strokeStyle = isTarget ? '#10b981' : '#6b7280';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x, y, w, h);
+
+                if (isTarget && confidence > 0.60) {
+                    detectedTargets.push({
+                        class: pred.class,
+                        confidence: parseFloat((confidence * 100).toFixed(2))
+                    });
+
+                    const label = `${pred.class} ${(confidence * 100).toFixed(0)}%`;
+                    ctx.fillStyle = '#10b981';
+                    const textWidth = ctx.measureText(label).width;
+                    ctx.fillRect(x, y - 25, textWidth + 10, 25);
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 14px sans-serif';
+                    ctx.fillText(label, x + 5, y - 7);
+                }
+            });
+
+            const targetDetections = predictions.filter(p =>
+                TARGET_CLASSES.includes(p.class) && p.score > 0.60
+            );
+            document.getElementById('detected-count').textContent = targetDetections.length;
+
+            // THROTTLING: Hanya simpan jika sudah lewat 3 detik
+            if (detectedTargets.length > 0 && (Date.now() - lastSaveTime > SAVE_THROTTLE_MS)) {
+                saveToDatabase(detectedTargets);
+                lastSaveTime = Date.now();
+            }
+
+            animationId = requestAnimationFrame(detectLoop);
+        }
+
+        // ==================== 5. TOGGLE AI ====================
+        function toggleAI() {
+            const btnAI = document.getElementById('btn-ai');
+
+            if (!model) {
+                showToast("Model AI belum dimuat. Tunggu sebentar...", "error");
+                loadModel();
+                return;
+            }
+
+            if (!isAIDetecting) {
+                isAIDetecting = true;
+                btnAI.textContent = " Stop AI";
+                btnAI.classList.add('stop');
+                document.getElementById('detection-info').style.display = 'block';
+                detectLoop();
+                showToast("AI Detection dimulai!", "success");
+            } else {
+                isAIDetecting = false;
+                btnAI.textContent = " Start AI";
+                btnAI.classList.remove('stop');
+                if (animationId) cancelAnimationFrame(animationId);
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                showToast("AI Detection dihentikan.", "");
+            }
+        }
+
+        // ==================== 6. FUNGSI KAMERA ====================
+        async function startCamera() {
+            try {
+                showOverlay("Mengaktifkan Kamera...", "Mohon izinkan akses kamera.");
+
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                });
+
+                video.srcObject = stream;
+                currentStream = stream;
+                isCameraOn = true;
+
+                await new Promise(resolve => {
+                    video.onloadedmetadata = () => {
+                        console.log('Resolusi kamera:', video.videoWidth, 'x', video.videoHeight);
+                        resolve();
+                    };
+                });
+
+                document.getElementById('camera-container').style.display = 'block';
+                document.getElementById('btn-start').style.display = 'none';
+                document.getElementById('btn-stop').style.display = 'inline-block';
+                document.getElementById('btn-ai').style.display = 'inline-block';
+
+                hideOverlay();
+                console.log("Kamera berhasil dinyalakan!");
+
+                if (!model) {
+                    loadModel();
+                }
+            } catch (err) {
+                console.error("Gagal akses kamera:", err);
+                hideOverlay();
+                alert("Akses kamera ditolak. Pastikan izin kamera diizinkan di browser.");
+            }
+        }
+
+        function stopCamera() {
+            if (isAIDetecting) {
+                isAIDetecting = false;
+                if (animationId) cancelAnimationFrame(animationId);
+                const btnAI = document.getElementById('btn-ai');
+                btnAI.textContent = "🤖 Start AI";
+                btnAI.classList.remove('stop');
+            }
+
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                currentStream = null;
+            }
+
+            isCameraOn = false;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            document.getElementById('camera-container').style.display = 'none';
+            document.getElementById('btn-start').style.display = 'inline-block';
+            document.getElementById('btn-stop').style.display = 'none';
+            document.getElementById('btn-ai').style.display = 'none';
+            document.getElementById('detection-info').style.display = 'none';
+
+            console.log("Kamera dimatikan.");
+        }
+
+        // ==================== 7. INIT APP ====================
+        function initApp() {
+            console.log("Memulai inisialisasi aplikasi...");
+            listenToDatabase();
+            loadModel();
+            console.log("Inisialisasi selesai!");
+        }
+
+        document.addEventListener('DOMContentLoaded', initApp);
+
+        window.startCamera = startCamera;
+        window.stopCamera = stopCamera;
+        window.toggleAI = toggleAI;
+    </script>
+</body>
+</html>
